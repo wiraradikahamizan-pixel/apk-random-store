@@ -2,18 +2,28 @@ const SUPABASE_URL = "https://jeqdbauakdkvwtuibdgx.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_TenfH1yB2OuqL0OyNWLsAw_D4Z-uj_v";
 
 const BUCKET_NAME = "apks";
-const MAX_FILE_SIZE = 10 * 1000 * 1000 * 1000 * 1000;
+const MAX_FILE_SIZE = 215 * 1000 * 1000 * 1000;
 
 const $ = (id) => document.getElementById(id);
 
 let supabaseClient = null;
 let allApps = [];
 let activeCategory = "Semua";
+let isUploading = false;
 
 const categories = [
-  "Semua", "Game", "Aplikasi", "Tools", "Emulator",
-  "Plugin / Mod", "DLC / Add-on", "Driver",
-  "Software PC", "Sistem / Firmware", "Arsip", "Lainnya"
+  "Semua",
+  "Game",
+  "Aplikasi",
+  "Tools",
+  "Emulator",
+  "Plugin / Mod",
+  "DLC / Add-on",
+  "Driver",
+  "Software PC",
+  "Sistem / Firmware",
+  "Arsip",
+  "Lainnya"
 ];
 
 function escapeHTML(value) {
@@ -41,14 +51,14 @@ function formatSize(bytes) {
 
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = Number(bytes);
-  let unit = 0;
+  let index = 0;
 
-  while (size >= 1000 && unit < units.length - 1) {
+  while (size >= 1000 && index < units.length - 1) {
     size /= 1000;
-    unit++;
+    index++;
   }
 
-  return `${size.toFixed(unit ? 2 : 0)} ${units[unit]}`;
+  return `${size.toFixed(index ? 2 : 0)} ${units[index]}`;
 }
 
 function renderFilters() {
@@ -91,8 +101,8 @@ function renderApps() {
     grid.innerHTML = `
       <div class="empty">
         ${allApps.length
-          ? "Tidak ada file yang cocok."
-          : "Belum ada file di katalog."}
+          ? "Tidak ada file yang cocok dengan pencarian."
+          : "Katalog masih kosong."}
       </div>`;
     return;
   }
@@ -108,20 +118,25 @@ function renderApps() {
           <span class="app-category">
             ${escapeHTML(app.category || "Lainnya")}
           </span>
+
           <h3>${escapeHTML(app.name || "Tanpa nama")}</h3>
+
           <p>Versi: ${escapeHTML(app.version || "-")}</p>
+
           <p class="app-description">
             ${escapeHTML(app.description || "Tidak ada deskripsi.")}
           </p>
+
           ${app.file_size != null
             ? `<p>Ukuran: ${formatSize(app.file_size)}</p>`
             : ""}
+
           ${url
             ? `<a class="download-btn"
                   href="${escapeHTML(url)}"
                   target="_blank"
                   rel="noopener noreferrer">Unduh</a>`
-            : `<p>Link unduhan tidak tersedia.</p>`}
+            : `<p>Link unduhan belum tersedia.</p>`}
         </div>
       </article>`;
   }).join("");
@@ -144,7 +159,7 @@ async function loadApps() {
     allApps = data || [];
     renderApps();
   } catch (error) {
-    console.error("Katalog gagal dimuat:", error);
+    console.error("Gagal memuat katalog:", error);
 
     grid.innerHTML = `
       <div class="empty">
@@ -172,12 +187,16 @@ async function checkSession() {
 
   try {
     const { data, error } = await supabaseClient.auth.getSession();
+
     if (error) throw error;
 
-    if (data.session) showUploadPanel();
-    else showLoginPanel();
+    if (data.session) {
+      showUploadPanel();
+    } else {
+      showLoginPanel();
+    }
   } catch (error) {
-    console.error("Pemeriksaan sesi gagal:", error);
+    console.error("Gagal memeriksa sesi:", error);
     showLoginPanel();
   }
 }
@@ -188,7 +207,7 @@ async function loginAdmin() {
   const button = $("loginBtn");
 
   if (!email || !password) {
-    setAdminStatus("Email dan password wajib diisi.");
+    setAdminStatus("Isi email dan password admin.");
     return;
   }
 
@@ -207,7 +226,7 @@ async function loginAdmin() {
     setAdminStatus("Login berhasil.");
   } catch (error) {
     console.error("Login gagal:", error);
-    setAdminStatus("Login gagal. Periksa email, password, dan akun admin.");
+    setAdminStatus("Login gagal. Periksa email dan password.");
   } finally {
     if (button) button.disabled = false;
   }
@@ -216,6 +235,7 @@ async function loginAdmin() {
 async function logoutAdmin() {
   try {
     const { error } = await supabaseClient.auth.signOut();
+
     if (error) throw error;
 
     showLoginPanel();
@@ -227,6 +247,8 @@ async function logoutAdmin() {
 }
 
 async function uploadApp() {
+  if (isUploading) return;
+
   const name = $("appName")?.value.trim();
   const version = $("version")?.value.trim();
   const category = $("category")?.value || "Lainnya";
@@ -235,17 +257,17 @@ async function uploadApp() {
   const button = $("uploadBtn");
 
   if (!name || !file) {
-    setAdminStatus("Nama file dan file yang akan diunggah wajib diisi.");
+    setAdminStatus("Nama file dan file upload wajib diisi.");
     return;
   }
 
   if (file.size > MAX_FILE_SIZE) {
-    setAdminStatus("Ukuran file melebihi target batas 10 TB.");
+    setAdminStatus("Ukuran file melebihi target batas 215 GB.");
     return;
   }
 
+  isUploading = true;
   if (button) button.disabled = true;
-  setAdminStatus("Memeriksa sesi admin...");
 
   let uploadedPath = null;
 
@@ -254,7 +276,10 @@ async function uploadApp() {
       await supabaseClient.auth.getSession();
 
     if (sessionError) throw sessionError;
-    if (!sessionData.session) throw new Error("Login admin diperlukan.");
+
+    if (!sessionData.session) {
+      throw new Error("Silakan login sebagai admin terlebih dahulu.");
+    }
 
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const filePath = `${Date.now()}_${safeName}`;
@@ -264,10 +289,10 @@ async function uploadApp() {
     );
 
     /*
-      Ini memakai upload standar Supabase.
-      Batas ukuran nyata ditentukan layanan Storage.
-      File sangat besar memerlukan resumable/multipart
-      upload yang didukung oleh penyedia penyimpanan.
+      Batas 215 GB di sini hanya pemeriksaan browser.
+      Supabase dan metode upload yang digunakan harus
+      benar-benar mendukung ukuran file tersebut.
+      Upload standar ini belum menjamin file 215 GB berhasil.
     */
     const { error: uploadError } = await supabaseClient.storage
       .from(BUCKET_NAME)
@@ -277,6 +302,7 @@ async function uploadApp() {
       });
 
     if (uploadError) throw uploadError;
+
     uploadedPath = filePath;
 
     const { data: publicData } = supabaseClient.storage
@@ -297,7 +323,7 @@ async function uploadApp() {
 
     if (insertError) {
       throw new Error(
-        `File terunggah, tetapi data katalog gagal disimpan: ${insertError.message}`
+        `File berhasil diunggah, tetapi data katalog gagal disimpan: ${insertError.message}`
       );
     }
 
@@ -316,9 +342,13 @@ async function uploadApp() {
     );
 
     if (uploadedPath) {
-      console.error("File tersimpan di Storage dengan path:", uploadedPath);
+      console.error(
+        "Periksa Storage karena file mungkin sudah terunggah:",
+        uploadedPath
+      );
     }
   } finally {
+    isUploading = false;
     if (button) button.disabled = false;
   }
 }
@@ -339,7 +369,7 @@ function connectButtons() {
     const dialog = $("adminDialog");
 
     if (!dialog) {
-      setNotice("Dialog admin tidak ditemukan.");
+      setNotice("Panel admin tidak ditemukan.");
       return;
     }
 
@@ -362,13 +392,12 @@ function connectButtons() {
 }
 
 async function startApp() {
-  // Hubungkan tombol terlebih dahulu supaya UI tetap responsif.
   connectButtons();
   renderFilters();
 
   try {
     if (!window.supabase?.createClient) {
-      throw new Error("Library Supabase tidak berhasil dimuat.");
+      throw new Error("Library Supabase gagal dimuat.");
     }
 
     supabaseClient = window.supabase.createClient(
@@ -383,7 +412,7 @@ async function startApp() {
     checkSession();
     loadApps();
   } catch (error) {
-    console.error("Inisialisasi Supabase gagal:", error);
+    console.error("Inisialisasi gagal:", error);
 
     const grid = $("grid");
     if (grid) {
@@ -399,9 +428,6 @@ async function startApp() {
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", startApp);
-} else {
-  startApp();
-}"DOMContentLoaded", startApp);
 } else {
   startApp();
 }
