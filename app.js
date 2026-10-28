@@ -23,21 +23,23 @@ const CATEGORIES = [
   "Lainnya"
 ];
 
-const appList = document.getElementById("appList");
-const searchInput = document.getElementById("searchInput");
-const categoryFilter = document.getElementById("categoryFilter");
+const $ = id => document.getElementById(id);
 
-const adminStatus = document.getElementById("adminStatus");
-const uploadForm = document.getElementById("uploadForm");
+const searchInput = $("search");
+const grid = $("grid");
+const filters = $("filters");
+const count = $("count");
+const notice = $("notice");
+
+const adminDialog = $("adminDialog");
+const loginPanel = $("loginPanel");
+const uploadPanel = $("uploadPanel");
+const adminStatus = $("adminStatus");
 
 let allApps = [];
-
-function showStatus(message, success = false) {
-  if (!adminStatus) return;
-
-  adminStatus.textContent = message;
-  adminStatus.style.color = success ? "green" : "crimson";
-}
+let activeCategory = "Semua";
+let currentUser = null;
+let isUploading = false;
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
@@ -49,126 +51,87 @@ function escapeHTML(value) {
   })[char]);
 }
 
-function formatSize(bytes) {
-  if (!Number.isFinite(Number(bytes))) return "Ukuran tidak diketahui";
+function setNotice(message) {
+  if (notice) notice.textContent = message;
+}
 
+function setAdminStatus(message, success = false) {
+  if (!adminStatus) return;
+
+  adminStatus.textContent = message;
+  adminStatus.style.color = success ? "green" : "crimson";
+}
+
+function formatSize(bytes) {
   const size = Number(bytes);
+
+  if (!Number.isFinite(size)) return "Ukuran tidak diketahui";
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
 
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getFileExtension(fileName) {
-  const parts = String(fileName || "").split(".");
-  return parts.length > 1 ? parts.pop().toUpperCase() : "FILE";
+function getExtension(fileName) {
+  const name = String(fileName || "");
+  const dot = name.lastIndexOf(".");
+
+  return dot >= 0
+    ? name.slice(dot + 1).toUpperCase()
+    : "FILE";
 }
 
-function populateCategories() {
-  if (categoryFilter) {
-    const currentValue = categoryFilter.value;
-
-    categoryFilter.innerHTML =
-      '<option value="">Semua Kategori</option>' +
-      CATEGORIES.map(category =>
-        `<option value="${escapeHTML(category)}">${escapeHTML(category)}</option>`
-      ).join("");
-
-    categoryFilter.value = currentValue;
-  }
-
-  const uploadCategory = document.getElementById("category");
-
-  if (uploadCategory) {
-    const currentValue = uploadCategory.value;
-
-    uploadCategory.innerHTML =
-      '<option value="">Pilih Kategori</option>' +
-      CATEGORIES.map(category =>
-        `<option value="${escapeHTML(category)}">${escapeHTML(category)}</option>`
-      ).join("");
-
-    uploadCategory.value = currentValue;
-  }
-}
-
-async function loadApps() {
-  if (appList) {
-    appList.innerHTML = "<p>Memuat daftar file...</p>";
-  }
-
-  const { data, error } = await supabaseClient
-    .from("apps")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    console.error("Gagal memuat daftar:", error);
-
-    if (appList) {
-      appList.innerHTML =
-        "<p>Gagal memuat file. Periksa koneksi atau pengaturan Supabase.</p>";
-    }
-
-    return;
-  }
-
-  allApps = data || [];
-  renderApps();
+function getFileName(app) {
+  return app.file_path
+    ? app.file_path.split("/").pop()
+    : app.name || "File";
 }
 
 function renderApps() {
-  if (!appList) return;
+  if (!grid) return;
 
   const keyword = (searchInput?.value || "").trim().toLowerCase();
-  const selectedCategory = categoryFilter?.value || "";
 
-  const filteredApps = allApps.filter(app => {
-    const searchableText = [
+  const results = allApps.filter(app => {
+    const matchesCategory =
+      activeCategory === "Semua" ||
+      (app.category || "Lainnya") === activeCategory;
+
+    const text = [
       app.name,
       app.version,
       app.category,
       app.description,
-      app.file_path
+      getFileName(app)
     ].join(" ").toLowerCase();
 
-    const matchesKeyword = searchableText.includes(keyword);
-    const matchesCategory =
-      !selectedCategory || app.category === selectedCategory;
-
-    return matchesKeyword && matchesCategory;
+    return matchesCategory && text.includes(keyword);
   });
 
-  if (filteredApps.length === 0) {
-    appList.innerHTML = "<p>Belum ada file yang cocok.</p>";
+  if (count) {
+    count.textContent = `${results.length} file ditemukan`;
+  }
+
+  if (!results.length) {
+    grid.innerHTML = '<div class="empty">Belum ada file yang cocok.</div>';
     return;
   }
 
-  appList.innerHTML = filteredApps.map(app => {
-    const fileName = app.file_path
-      ? app.file_path.split("/").pop()
-      : app.name || "File";
-
+  grid.innerHTML = results.map(app => {
+    const fileName = getFileName(app);
     const downloadURL = app.file_url || "";
 
     return `
       <article class="app-card">
         <div class="app-info">
-          <span class="file-type">
-            ${escapeHTML(getFileExtension(fileName))}
-          </span>
-
+          <span class="file-type">${escapeHTML(getExtension(fileName))}</span>
           <h3>${escapeHTML(app.name || fileName)}</h3>
-
           <p>Kategori: ${escapeHTML(app.category || "Lainnya")}</p>
-
           ${app.version
             ? `<p>Versi: ${escapeHTML(app.version)}</p>`
             : ""}
-
           <p>${escapeHTML(app.description || "Tidak ada deskripsi.")}</p>
-
-          ${app.file_size
+          ${app.file_size != null
             ? `<p>Ukuran: ${formatSize(app.file_size)}</p>`
             : ""}
         </div>
@@ -179,9 +142,7 @@ function renderApps() {
                  href="${escapeHTML(downloadURL)}"
                  target="_blank"
                  rel="noopener noreferrer"
-                 download>
-                 Download
-               </a>`
+                 download>Download</a>`
             : "<p>Link download tidak tersedia.</p>"
         }
       </article>
@@ -189,100 +150,254 @@ function renderApps() {
   }).join("");
 }
 
-async function uploadFile(event) {
-  event.preventDefault();
+async function loadApps() {
+  if (grid) {
+    grid.innerHTML = '<div class="empty">Memuat koleksi...</div>';
+  }
 
-  const nameInput = document.getElementById("appName");
-  const versionInput = document.getElementById("appVersion");
-  const categoryInput = document.getElementById("category");
-  const descriptionInput = document.getElementById("description");
-  const fileInput = document.getElementById("apkFile");
+  const { data, error } = await supabaseClient
+    .from("apps")
+    .select("*")
+    .order("created_at", { ascending: false });
 
-  const name = nameInput?.value.trim() || "";
-  const version = versionInput?.value.trim() || "";
-  const category = categoryInput?.value || "";
-  const description = descriptionInput?.value.trim() || "";
-  const file = fileInput?.files?.[0];
+  if (error) {
+    console.error("Gagal memuat katalog:", error);
 
-  if (!name || !file || !category) {
-    showStatus("Isi nama, kategori, dan pilih file.");
+    if (grid) {
+      grid.innerHTML =
+        '<div class="empty">Gagal memuat katalog. Periksa koneksi dan izin Supabase.</div>';
+    }
+
+    if (count) count.textContent = "Katalog gagal dimuat";
     return;
   }
 
-  if (file.size > MAX_FILE_SIZE) {
-    showStatus("Ukuran file maksimal 100 MB.");
+  allApps = data || [];
+  renderApps();
+}
+
+function setCategory(category) {
+  activeCategory = category;
+
+  filters?.querySelectorAll(".chip").forEach(button => {
+    button.classList.toggle(
+      "active",
+      button.dataset.category === category
+    );
+  });
+
+  renderApps();
+}
+
+async function checkSession() {
+  const { data, error } = await supabaseClient.auth.getSession();
+
+  if (error) {
+    console.error("Gagal memeriksa sesi:", error);
+  }
+
+  currentUser = data?.session?.user || null;
+  updateAdminPanel();
+}
+
+function updateAdminPanel() {
+  const loggedIn = Boolean(currentUser);
+
+  if (loginPanel) loginPanel.hidden = loggedIn;
+  if (uploadPanel) uploadPanel.hidden = !loggedIn;
+
+  if (loggedIn) {
+    setAdminStatus(`Login sebagai ${currentUser.email || "admin"}`, true);
+  } else {
+    setAdminStatus("");
+  }
+}
+
+async function loginAdmin() {
+  const email = $("email")?.value.trim();
+  const password = $("password")?.value;
+
+  if (!email || !password) {
+    setAdminStatus("Masukkan email dan password.");
+    return;
+  }
+
+  $("loginBtn").disabled = true;
+  setAdminStatus("Sedang masuk...");
+
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) throw error;
+
+    currentUser = data.user;
+    updateAdminPanel();
+    setAdminStatus("Login berhasil.", true);
+  } catch (error) {
+    console.error("Login gagal:", error);
+    setAdminStatus("Login gagal. Periksa email dan password.");
+  } finally {
+    $("loginBtn").disabled = false;
+  }
+}
+
+async function logoutAdmin() {
+  const { error } = await supabaseClient.auth.signOut();
+
+  if (error) {
+    console.error("Logout gagal:", error);
+    setAdminStatus("Gagal keluar dari akun.");
+    return;
+  }
+
+  currentUser = null;
+  updateAdminPanel();
+  setAdminStatus("Berhasil keluar.", true);
+}
+
+async function uploadFile() {
+  if (isUploading) return;
+
+  if (!currentUser) {
+    setAdminStatus("Login admin terlebih dahulu.");
+    return;
+  }
+
+  const name = $("appName")?.value.trim() || "";
+  const version = $("version")?.value.trim() || "";
+  const category = $("category")?.value || "";
+  const description = $("description")?.value.trim() || "";
+  const file = $("apkFile")?.files?.[0];
+
+  if (!name || !category || !file) {
+    setAdminStatus("Isi nama, kategori, dan pilih file.");
     return;
   }
 
   if (file.size === 0) {
-    showStatus("File kosong tidak bisa diunggah.");
+    setAdminStatus("File kosong tidak bisa diunggah.");
     return;
   }
 
-  showStatus("Sedang mengunggah file...");
-
-  const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const filePath = `${Date.now()}_${safeFileName}`;
-
-  const { error: uploadError } = await supabaseClient
-    .storage
-    .from(BUCKET_NAME)
-    .upload(filePath, file, {
-      cacheControl: "3600",
-      upsert: false,
-      contentType: file.type || "application/octet-stream"
-    });
-
-  if (uploadError) {
-    console.error("Upload gagal:", uploadError);
-    showStatus("Upload gagal. Periksa izin Storage Supabase.");
+  if (file.size > MAX_FILE_SIZE) {
+    setAdminStatus("Ukuran file maksimal 100 MB.");
     return;
   }
 
-  const { data: urlData } = supabaseClient
-    .storage
-    .from(BUCKET_NAME)
-    .getPublicUrl(filePath);
+  // Tidak ada validasi ekstensi APK.
+  // Semua ekstensi file diizinkan oleh JavaScript ini.
 
-  const { error: insertError } = await supabaseClient
-    .from("apps")
-    .insert({
-      name,
-      version,
-      category,
-      description,
-      file_path: filePath,
-      file_url: urlData.publicUrl,
-      file_size: file.size
-    });
+  isUploading = true;
+  $("uploadBtn").disabled = true;
+  setAdminStatus("Sedang mengunggah file...");
 
-  if (insertError) {
-    console.error("Gagal menyimpan data:", insertError);
-    showStatus(
-      "File berhasil diunggah, tetapi data gagal disimpan. Periksa kolom tabel dan izin database."
+  let uploadedPath = null;
+
+  try {
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const filePath = `${Date.now()}_${safeFileName}`;
+
+    const { error: uploadError } = await supabaseClient
+      .storage
+      .from(BUCKET_NAME)
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: file.type || "application/octet-stream"
+      });
+
+    if (uploadError) throw uploadError;
+
+    uploadedPath = filePath;
+
+    const { data: urlData } = supabaseClient
+      .storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    const { error: insertError } = await supabaseClient
+      .from("apps")
+      .insert({
+        name,
+        version,
+        category,
+        description,
+        file_path: filePath,
+        file_url: urlData.publicUrl,
+        file_size: file.size
+      });
+
+    if (insertError) {
+      // Hapus file yang telanjur diunggah agar tidak menjadi file yatim.
+      await supabaseClient.storage
+        .from(BUCKET_NAME)
+        .remove([uploadedPath]);
+
+      throw insertError;
+    }
+
+    $("appName").value = "";
+    $("version").value = "";
+    $("description").value = "";
+    $("apkFile").value = "";
+
+    setAdminStatus("File berhasil diunggah!", true);
+
+    await loadApps();
+  } catch (error) {
+    console.error("Upload gagal:", error);
+    setAdminStatus(
+      "Upload gagal. Periksa izin Storage, kebijakan database, dan kolom tabel."
     );
-    return;
+  } finally {
+    isUploading = false;
+    $("uploadBtn").disabled = false;
+  }
+}
+
+// Pencarian katalog.
+searchInput?.addEventListener("input", renderApps);
+
+// Filter kategori.
+filters?.addEventListener("click", event => {
+  const button = event.target.closest("[data-category]");
+
+  if (!button) return;
+
+  setCategory(button.dataset.category);
+});
+
+// Buka panel admin.
+$("adminOpen")?.addEventListener("click", async () => {
+  if (typeof adminDialog.showModal === "function") {
+    adminDialog.showModal();
   }
 
-  showStatus("File berhasil diunggah!", true);
+  await checkSession();
+});
 
-  uploadForm?.reset();
+// Login, upload, dan logout.
+$("loginBtn")?.addEventListener("click", loginAdmin);
+$("uploadBtn")?.addEventListener("click", uploadFile);
+$("logoutBtn")?.addEventListener("click", logoutAdmin);
 
-  await loadApps();
-}
+// Enter di kolom password menjalankan login.
+$("password")?.addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    loginAdmin();
+  }
+});
 
-populateCategories();
+// Perbarui status sesi ketika autentikasi berubah.
+supabaseClient.auth.onAuthStateChange((_event, session) => {
+  currentUser = session?.user || null;
+  updateAdminPanel();
+});
 
-if (searchInput) {
-  searchInput.addEventListener("input", renderApps);
-}
-
-if (categoryFilter) {
-  categoryFilter.addEventListener("change", renderApps);
-}
-
-if (uploadForm) {
-  uploadForm.addEventListener("submit", uploadFile);
-}
-
+// Jalankan aplikasi.
+checkSession();
 loadApps();
